@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>金魚すくいゲーム (PC版)</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Interフォントのインポート */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        
+        /* HTMLとBODY要素のスクロールとタッチアクションを完全に無効化 */
+        html, body {
+            height: 100%; /* ビューポートの高さに厳密に合わせる */
+            margin: 0;
+            overflow: hidden; /* スクロールを完全に防ぐ */
+            touch-action: none; /* 全てのタッチアクションを無効化 */
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #e0f2fe; /* Light blue background */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .game-container {
+            background-color: #ffffff;
+            border-radius: 1.5rem; /* Rounded corners */
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            /* PC画面用に最大幅を広く調整 */
+            max-width: 800px; /* Max width for desktop */
+            width: 90vw; /* Responsive width, allows it to shrink on smaller screens */
+        }
+        canvas {
+            background-color: #87ceeb; /* Sky blue pond color */
+            border-radius: 1rem;
+            border: 4px solid #4a90e2; /* Blue border for the pond */
+            display: block;
+            width: 100%; /* Make canvas responsive */
+            /* PC画面用に高さを調整。vhで相対的に、min-heightで最小値を保証 */
+            min-height: 300px; /* Minimum height for smaller screens */
+            height: 70vh; /* Responsive height for larger screens (70% of viewport height) */
+            touch-action: none; /* Prevent browser touch actions like scrolling/zooming */
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            margin-top: 1rem;
+            padding: 0 1rem;
+        }
+        .info-box {
+            background-color: #e0f7fa;
+            border-radius: 0.75rem;
+            padding: 0.5rem 1rem;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #00796b;
+            text-align: center;
+            flex: 1;
+            margin: 0 0.5rem;
+        }
+        .start-button {
+            background-color: #4CAF50; /* Green */
+            color: white;
+            padding: 0.8rem 1.8rem;
+            font-size: 1.2rem;
+            font-weight: 700;
+            border: none;
+            border-radius: 9999px; /* Pill shape */
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.1s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-top: 1.5rem;
+            flex-shrink: 0;
+        }
+        .start-button:hover {
+            background-color: #45a049;
+            transform: translateY(-2px);
+        }
+        .start-button:active {
+            transform: translateY(0);
+        }
+        .message-box {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(255, 255, 255, 0.95);
+            border-radius: 1rem;
+            padding: 2rem;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            z-index: 1000;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #333;
+            display: none; /* Hidden by default */
+            max-width: 80vw;
+        }
+        .message-box button {
+            margin-top: 1.5rem;
+            background-color: #2196F3; /* Blue */
+            color: white;
+            padding: 0.7rem 1.5rem;
+            font-size: 1.1rem;
+            border: none;
+            border-radius: 0.75rem;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+        .message-box button:hover {
+            background-color: #1976D2;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <h1 class="text-3xl font-bold text-center text-blue-700 mb-4">金魚すくい (PC版)</h1>
+        <canvas id="gameCanvas"></canvas>
+        <div class="controls">
+            <div id="scoreDisplay" class="info-box">スコア: 0</div>
+            <div id="timerDisplay" class="info-box">時間: 30</div>
+        </div>
+        <button id="startButton" class="start-button">ゲームスタート</button>
+    </div>
+
+    <div id="messageBox" class="message-box">
+        <p id="messageText"></p>
+        <button id="messageCloseButton">OK</button>
+    </div>
+
+    <script type="module">
+        // Firebase configuration is automatically provided by the Canvas environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+
+        // Import Firebase SDKs
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Initialize Firebase app
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        let userId = null; // Variable to store user ID
+        let isAuthReady = false; // Flag to indicate if authentication is complete
+
+        // Observe authentication state
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                userId = user.uid;
+                console.log("Firebase Auth Ready. User ID:", userId);
+            } else {
+                // If user is not authenticated, sign in anonymously
+                try {
+                    if (typeof __initial_auth_token !== 'undefined') {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                        userId = auth.currentUser.uid;
+                        console.log("Signed in with custom token. User ID:", userId);
+                    } else {
+                        await signInAnonymously(auth);
+                        userId = auth.currentUser.uid;
+                        console.log("Signed in anonymously. User ID:", userId);
+                    }
+                } catch (error) {
+                    console.error("Firebase authentication failed:", error);
+                }
+            }
+            isAuthReady = true; // Mark authentication process as complete
+        });
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const timerDisplay = document.getElementById('timerDisplay');
+        const startButton = document.getElementById('startButton');
+        const messageBox = document.getElementById('messageBox');
+        const messageText = document.getElementById('messageText');
+        const messageCloseButton = document.getElementById('messageCloseButton');
+
+        // Resize canvas to fit window
+        function resizeCanvas() {
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
+        }
+
+        // Add listener for window resize event
+        window.addEventListener('resize', resizeCanvas);
+        // Resize canvas on initial load
+        window.onload = function() {
+            resizeCanvas();
+            // Start the animation loop (static image before game starts)
+            gameLoop();
+        };
+
+        let goldfishArray = [];
+        let score = 0;
+        const GAME_DURATION = 30; // 30 seconds
+        let timeLeft = GAME_DURATION;
+        let gameInterval;
+        let gameStarted = false;
+        // Poi radius (21.6 - unchanged as per user request to keep current size)
+        let poi = { x: 0, y: 0, radius: 21.6 }; 
+
+        // Goldfish speed settings and points
+        const GOLDFISH_SPEEDS = {
+            fast: { speed: 4, points: 4, color: '#ff0000', tailColor: '#cc0000' },    // 赤
+            normal: { speed: 2, points: 2, color: '#ffa500', tailColor: '#cc8400' }, // オレンジ
+            slow: { speed: 1, points: 1, color: '#ffff00', tailColor: '#cccc00' }  // 黄色
+        };
+
+        // Goldfish spawn probabilities (sum to 100%)
+        // Adjusted to make it harder to reach 200 points consistently, targeting "barely making it or slightly not"
+        const GOLDFISH_PROBABILITIES = {
+            fast: 0.65, // Decreased from 0.70 to 0.65
+            normal: 0.23, // Increased from 0.20 to 0.23
+            slow: 0.12  // Increased from 0.10 to 0.12
+        };
+
+        const MIN_GOLDFISH = 3; // Minimum number of goldfish on screen
+        const MAX_GOLDFISH = 4; // Maximum number of goldfish on screen
+        const WINNING_SCORE = 200; // Winning score (reverted to 200)
+
+        // Goldfish Class
+        class Goldfish {
+            constructor(x, y, type) {
+                this.x = x;
+                this.y = y;
+                this.bodyRadius = 10; // Goldfish body radius (unchanged)
+                this.type = type;
+                this.speed = GOLDFISH_SPEEDS[type].speed;
+                this.points = GOLDFISH_SPEEDS[type].points;
+                this.color = GOLDFISH_SPEEDS[type].color;
+                this.tailColor = GOLDFISH_SPEEDS[type].tailColor;
+                
+                // Random movement direction
+                this.dx = (Math.random() - 0.5) * this.speed * 2;
+                this.dy = (Math.random() - 0.5) * this.speed * 2;
+
+                // Tail attributes based on bodyRadius
+                this.tailLength = this.bodyRadius * 1.5; // Tail length
+                this.tailAngle = Math.atan2(this.dy, this.dx); // Initial tail angle
+            }
+
+            draw() {
+                // Goldfish body (simple circle)
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.bodyRadius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.closePath();
+
+                // Tail (simple triangle)
+                // Tail direction is opposite to movement direction
+                const tailDirX = -Math.cos(this.tailAngle);
+                const tailDirY = -Math.sin(this.tailAngle);
+
+                // Calculate tail points relative to goldfish center
+                ctx.beginPath();
+                // Point connected to the body
+                ctx.moveTo(this.x + tailDirX * this.bodyRadius, this.y + tailDirY * this.bodyRadius);
+                // Top tip of the tail
+                ctx.lineTo(this.x + tailDirX * (this.bodyRadius + this.tailLength), this.y + tailDirY * (this.bodyRadius + this.tailLength) + this.bodyRadius / 2);
+                // Bottom tip of the tail
+                ctx.lineTo(this.x + tailDirX * (this.bodyRadius + this.tailLength), this.y + tailDirY * (this.bodyRadius + this.tailLength) - this.bodyRadius / 2);
+                ctx.fillStyle = this.tailColor;
+                ctx.fill();
+                ctx.closePath();
+            }
+
+            update() {
+                this.x += this.dx;
+                this.y += this.dy;
+
+                // Update tail angle based on new direction
+                this.tailAngle = Math.atan2(this.dy, this.dx);
+
+                // Reflect off walls, accounting for body size
+                const currentRadius = this.bodyRadius; // Use bodyRadius for bounds check
+                if (this.x + currentRadius > canvas.width || this.x - currentRadius < 0) {
+                    this.dx *= -1;
+                    this.tailAngle = Math.atan2(this.dy, this.dx); // Update tail angle on bounce
+                }
+                if (this.y + currentRadius > canvas.height || this.y - currentRadius < 0) {
+                    this.dy *= -1;
+                    this.tailAngle = Math.atan2(this.dy, this.dx); // Update tail angle on bounce
+                }
+            }
+        }
+
+        // Create a goldfish
+        function createGoldfish() {
+            // Ensure goldfish spawn fully within bounds
+            // Using the fixed bodyRadius of 10 for buffer calculation
+            const buffer = 10 * 2; 
+            const x = Math.random() * (canvas.width - buffer * 2) + buffer;
+            const y = Math.random() * (canvas.height - buffer * 2) + buffer;
+
+            let type;
+            const rand = Math.random();
+            if (rand < GOLDFISH_PROBABILITIES.fast) {
+                type = 'fast';
+            } else if (rand < GOLDFISH_PROBABILITIES.fast + GOLDFISH_PROBABILITIES.normal) {
+                type = 'normal';
+            } else {
+                type = 'slow';
+            }
+            goldfishArray.push(new Goldfish(x, y, type));
+        }
+
+        // Draw the poi
+        function drawPoi() {
+            if (poi.x === 0 && poi.y === 0) return; // Don't draw if initial position is 0,0
+
+            ctx.beginPath();
+            ctx.arc(poi.x, poi.y, poi.radius, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)'; // Translucent black
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            ctx.closePath();
+        }
+
+        // Check for collisions
+        function checkCollision() {
+            goldfishArray = goldfishArray.filter(goldfish => {
+                // Simplified collision check using a bounding circle for the goldfish
+                const distance = Math.sqrt(
+                    (poi.x - goldfish.x) ** 2 + (poi.y - goldfish.y) ** 2
+                );
+                if (distance < poi.radius + goldfish.bodyRadius) {
+                    score += goldfish.points;
+                    scoreDisplay.textContent = `スコア: ${score}`;
+                    return false; // Remove caught goldfish from array
+                }
+                return true; // Keep uncaught goldfish
+            });
+        }
+
+        // Update game state
+        function updateGame() {
+            if (!gameStarted) return;
+
+            // Maintain the number of goldfish between MIN_GOLDFISH and MAX_GOLDFISH
+            while (goldfishArray.length < MIN_GOLDFISH || goldfishArray.length > MAX_GOLDFISH) {
+                if (goldfishArray.length < MIN_GOLDFISH) {
+                    createGoldfish();
+                } else if (goldfishArray.length > MAX_GOLDFISH) {
+                    // Remove a random goldfish if there are too many, to avoid always removing the last one
+                    const randomIndex = Math.floor(Math.random() * goldfishArray.length);
+                    goldfishArray.splice(randomIndex, 1);
+                }
+            }
+
+            goldfishArray.forEach(goldfish => goldfish.update());
+            checkCollision();
+        }
+
+        // Draw game elements
+        function drawGame() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear the canvas
+            goldfishArray.forEach(goldfish => goldfish.draw());
+            drawPoi();
+        }
+
+        // Main game loop
+        function gameLoop() {
+            updateGame();
+            drawGame();
+            requestAnimationFrame(gameLoop); // Request next frame
+        }
+
+        // Show message box
+        function showMessageBox(message) {
+            messageText.textContent = message;
+            messageBox.style.display = 'block';
+        }
+
+        // Hide message box
+        messageCloseButton.addEventListener('click', () => {
+            messageBox.style.display = 'none';
+        });
+
+        // Start game
+        function startGame() {
+            if (gameStarted) return; // Do nothing if game is already started
+
+            gameStarted = true;
+            score = 0;
+            timeLeft = GAME_DURATION;
+            goldfishArray = [];
+            scoreDisplay.textContent = `スコア: ${score}`;
+            timerDisplay.textContent = `時間: ${timeLeft}`;
+            startButton.disabled = true; // Disable start button
+            startButton.textContent = 'プレイ中...';
+
+            // Set initial poi position to center of the canvas
+            poi.x = canvas.width / 2;
+            poi.y = canvas.height / 2;
+
+            // Initial goldfish creation
+            for (let i = 0; i < MAX_GOLDFISH; i++) { // Ensure MAX_GOLDFISH are created initially
+                createGoldfish();
+            }
+
+            // Start timer
+            gameInterval = setInterval(() => {
+                timeLeft--;
+                timerDisplay.textContent = `時間: ${timeLeft}`;
+
+                if (timeLeft <= 0) {
+                    clearInterval(gameInterval);
+                    endGame();
+                }
+            }, 1000); // Update every 1 second
+        }
+
+        // End game
+        function endGame() {
+            gameStarted = false;
+            startButton.disabled = false; // Enable start button
+            startButton.textContent = 'ゲームスタート';
+
+            let message;
+            if (score >= WINNING_SCORE) {
+                message = `ゲームクリア！\nスコア: ${score}点\nおめでとうございます！`;
+            } else {
+                message = `ゲームオーバー！\nスコア: ${score}点\n残念でした。${WINNING_SCORE}点には届きませんでした。`;
+            }
+            showMessageBox(message);
+
+            // Save score to Firestore
+            if (isAuthReady && userId) { // Ensure authentication is complete
+                const scoresCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/scores`);
+                addDoc(scoresCollectionRef, {
+                    score: score,
+                    timestamp: new Date(),
+                    result: score >= WINNING_SCORE ? 'Win' : 'Loss'
+                }).then(() => {
+                    console.log("Score saved to Firestore!");
+                }).catch((error) => {
+                    console.error("Error saving score: ", error);
+                });
+            } else {
+                console.warn("Firestore not ready or user not authenticated. Score not saved.");
+            }
+        }
+
+        // Event listeners
+        startButton.addEventListener('click', startGame);
+
+        // Handle both touch and mouse events (mouse will be used for PC)
+        canvas.addEventListener('mousemove', (e) => {
+            if (!gameStarted) return;
+            const rect = canvas.getBoundingClientRect();
+            poi.x = e.clientX - rect.left;
+            poi.y = e.clientY - rect.top;
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (!gameStarted) return;
+            // Track only the first finger if multiple touches
+            if (e.touches.length > 0) {
+                const rect = canvas.getBoundingClientRect();
+                poi.x = e.touches[0].clientX - rect.left;
+                poi.y = e.touches[0].clientY - rect.top;
+            }
+            e.preventDefault(); // Prevent scrolling etc.
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', () => {
+            // Do not update poi on touch end (keep last touched position)
+        });
+
+        canvas.addEventListener('touchcancel', () => {
+            // Do not update poi on touch cancel
+        });
+
+        // Initial draw
+        drawGame();
+    </script>
+</body>
+</html>
